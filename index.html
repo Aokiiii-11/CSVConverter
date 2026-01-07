@@ -129,6 +129,22 @@
             return null;
         }
 
+        function createRunId() {
+            return String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+        }
+
+        function safePreview(value, maxLen) {
+            const s = value == null ? '' : String(value);
+            if (s.length <= maxLen) return s;
+            return s.slice(0, maxLen) + '…(len=' + s.length + ')';
+        }
+
+        function matrixShape(matrix) {
+            const rows = Array.isArray(matrix) ? matrix.length : 0;
+            const cols = rows > 0 && Array.isArray(matrix[0]) ? matrix[0].length : 0;
+            return { rows, cols };
+        }
+
         function convert() {
             const fileInput = document.getElementById('file');
             const encodingInput = document.getElementById('encoding');
@@ -146,6 +162,8 @@
             showError('');
 
             const encoding = encodingInput.value;
+            const runId = createRunId();
+            const t0 = performance.now();
 
             Papa.parse(file, {
                 encoding: encoding,
@@ -156,15 +174,26 @@
                     return value == null ? '' : String(value);
                 },
                 complete: function(results) {
+                    console.groupCollapsed('[CSVConverter] convert ' + runId);
                     try {
+                        console.info('input', { name: file.name, size: file.size, type: file.type, encoding, verify: !!(verifyInput && verifyInput.checked) });
+                        console.info('timing(ms)', { started: 0, parsed: Math.round(performance.now() - t0) });
+
+                        if (results.errors && results.errors.length > 0) {
+                            console.warn('parseErrors', { count: results.errors.length, sample: results.errors.slice(0, 5) });
+                        }
                         if (results.errors.length > 0 && results.data.length === 0) {
                             throw new Error("CSV 解析失败: " + JSON.stringify(results.errors));
                         }
 
+                        const t1 = performance.now();
                         const inputMatrix = normalizeMatrix(results.data).normalized;
                         if (inputMatrix.length === 0) {
                             throw new Error('CSV 为空');
                         }
+
+                        const inputShape = matrixShape(inputMatrix);
+                        console.info('matrix', inputShape);
 
                         const wb = XLSX.utils.book_new();
 
@@ -192,19 +221,35 @@
                         }
                         outputFilename += '.xlsx';
 
+                        const tWriteStart = performance.now();
                         const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true, bookSST: true });
+                        const tWriteEnd = performance.now();
+                        console.info('xlsxBytes', { byteLength: out.byteLength });
+                        console.info('timing(ms)', { normalize: Math.round(t1 - t0), write: Math.round(tWriteEnd - tWriteStart) });
 
                         if (verifyInput && verifyInput.checked) {
+                            const tVerifyStart = performance.now();
                             const wb2 = XLSX.read(out, { type: 'array' });
                             const sheetName = wb2.SheetNames[0];
                             const ws2 = wb2.Sheets[sheetName];
                             const matrix2 = XLSX.utils.sheet_to_json(ws2, { header: 1, raw: false, defval: '' });
                             const a = normalizeMatrix(inputMatrix).normalized;
                             const b = normalizeMatrix(matrix2).normalized;
+
+                            console.info('verify.readBack', { sheetName, shape: matrixShape(b) });
                             const mismatch = findFirstMismatch(a, b);
                             if (mismatch) {
+                                console.error('verify.mismatch', {
+                                    row: mismatch.r + 1,
+                                    col: mismatch.c + 1,
+                                    csv: safePreview(mismatch.va, 200),
+                                    xlsx: safePreview(mismatch.vb, 200)
+                                });
                                 throw new Error(`一致性校验失败：第 ${mismatch.r + 1} 行第 ${mismatch.c + 1} 列不一致（CSV="${mismatch.va}", XLSX="${mismatch.vb}"）`);
                             }
+
+                            const tVerifyEnd = performance.now();
+                            console.info('verify.pass', { ms: Math.round(tVerifyEnd - tVerifyStart) });
                         }
 
                         const blob = new Blob([out], {
@@ -218,17 +263,22 @@
                         a.click();
                         a.remove();
                         URL.revokeObjectURL(url);
+
+                        console.info('download', { filename: outputFilename });
+                        console.info('timing(ms)', { total: Math.round(performance.now() - t0) });
                         
                         showSuccess(`转换成功！文件 ${outputFilename} 已开始下载。`);
                     } catch (e) {
                         console.error(e);
                         showError("转换出错: " + e.message);
                     } finally {
+                        console.groupEnd();
                         document.getElementById('convert-btn').disabled = false;
                         document.getElementById('loading').style.display = 'none';
                     }
                 },
                 error: function(err) {
+                    console.error('[CSVConverter] convert ' + runId, err);
                     showError("读取文件失败: " + err.message);
                     document.getElementById('convert-btn').disabled = false;
                     document.getElementById('loading').style.display = 'none';
@@ -237,6 +287,8 @@
         }
 
         function selfTest() {
+            const runId = createRunId();
+            const t0 = performance.now();
             const sample = [
                 'id,name,amount,code,note',
                 '1,张三,123,000123,普通行',
@@ -262,7 +314,13 @@
                     return value == null ? '' : String(value);
                 },
                 complete: function(results) {
+                    console.groupCollapsed('[CSVConverter] selfTest ' + runId);
                     try {
+                        console.info('timing(ms)', { started: 0, parsed: Math.round(performance.now() - t0) });
+
+                        if (results.errors && results.errors.length > 0) {
+                            console.warn('parseErrors', { count: results.errors.length, sample: results.errors.slice(0, 5) });
+                        }
                         if (results.errors.length > 0 && results.data.length === 0) {
                             throw new Error('CSV 解析失败: ' + JSON.stringify(results.errors));
                         }
@@ -271,6 +329,8 @@
                         if (inputMatrix.length === 0) {
                             throw new Error('CSV 为空');
                         }
+
+                        console.info('matrix', matrixShape(inputMatrix));
 
                         const wb = XLSX.utils.book_new();
                         const ws = XLSX.utils.aoa_to_sheet(inputMatrix);
@@ -292,6 +352,8 @@
 
                         const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true, bookSST: true });
 
+                        console.info('xlsxBytes', { byteLength: out.byteLength });
+
                         const wb2 = XLSX.read(out, { type: 'array' });
                         const sheetName = wb2.SheetNames[0];
                         const ws2 = wb2.Sheets[sheetName];
@@ -302,19 +364,29 @@
                         const mismatch = findFirstMismatch(a, b);
 
                         if (mismatch) {
+                            console.error('verify.mismatch', {
+                                row: mismatch.r + 1,
+                                col: mismatch.c + 1,
+                                csv: safePreview(mismatch.va, 200),
+                                xlsx: safePreview(mismatch.vb, 200)
+                            });
                             throw new Error('自测失败：第 ' + (mismatch.r + 1) + ' 行第 ' + (mismatch.c + 1) + ' 列不一致（CSV="' + mismatch.va + '", XLSX="' + mismatch.vb + '"）');
                         }
+
+                        console.info('verify.pass', { totalMs: Math.round(performance.now() - t0) });
 
                         showSuccess('自测通过：示例 CSV 与生成的 Excel 内容完全一致。');
                     } catch (e) {
                         console.error(e);
                         showError('自测失败: ' + e.message);
                     } finally {
+                        console.groupEnd();
                         if (btn) btn.disabled = false;
                         loading.style.display = 'none';
                     }
                 },
                 error: function(err) {
+                    console.error('[CSVConverter] selfTest ' + runId, err);
                     if (btn) btn.disabled = false;
                     loading.style.display = 'none';
                     showError('自测读取失败: ' + err.message);
