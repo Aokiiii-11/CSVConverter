@@ -20,7 +20,6 @@
         .success { color: green; margin-bottom: 1rem; display: none; padding: 0.5rem; background: #e6ffe6; border-radius: 4px; }
         #loading { display: none; text-align: center; margin-top: 1rem; }
     </style>
-    <!-- 引入必要的库 -->
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -46,7 +45,18 @@
             </select>
         </div>
 
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="verify" checked>
+                导出前校验一致性（更慢）
+            </label>
+        </div>
+
         <button id="convert-btn" onclick="convert()">开始转换并下载</button>
+
+        <div class="form-group" style="margin-top: 1rem;">
+            <button id="test-btn" onclick="selfTest()">运行内置自测</button>
+        </div>
         
         <div id="loading">正在转换中，请稍候...</div>
 
@@ -59,6 +69,11 @@
     <script>
         function showError(msg) {
             const el = document.getElementById('error-msg');
+            if (!msg) {
+                el.textContent = '';
+                el.style.display = 'none';
+                return;
+            }
             el.textContent = msg;
             el.style.display = 'block';
             document.getElementById('success-msg').style.display = 'none';
@@ -66,14 +81,58 @@
 
         function showSuccess(msg) {
             const el = document.getElementById('success-msg');
+            if (!msg) {
+                el.textContent = '';
+                el.style.display = 'none';
+                return;
+            }
             el.textContent = msg;
             el.style.display = 'block';
             document.getElementById('error-msg').style.display = 'none';
         }
 
+        function normalizeMatrix(matrix) {
+            const rows = Array.isArray(matrix) ? matrix : [];
+            let maxCols = 0;
+            for (const row of rows) {
+                const cols = Array.isArray(row) ? row.length : 0;
+                if (cols > maxCols) maxCols = cols;
+            }
+
+            const normalized = [];
+            for (const row of rows) {
+                const arr = Array.isArray(row) ? row : [];
+                const out = new Array(maxCols);
+                for (let i = 0; i < maxCols; i += 1) {
+                    const v = arr[i];
+                    out[i] = v == null ? '' : String(v);
+                }
+                normalized.push(out);
+            }
+            return { normalized, maxCols };
+        }
+
+        function findFirstMismatch(a, b) {
+            const rows = Math.max(a.length, b.length);
+            for (let r = 0; r < rows; r += 1) {
+                const rowA = a[r] || [];
+                const rowB = b[r] || [];
+                const cols = Math.max(rowA.length, rowB.length);
+                for (let c = 0; c < cols; c += 1) {
+                    const va = rowA[c] == null ? '' : String(rowA[c]);
+                    const vb = rowB[c] == null ? '' : String(rowB[c]);
+                    if (va !== vb) {
+                        return { r, c, va, vb };
+                    }
+                }
+            }
+            return null;
+        }
+
         function convert() {
             const fileInput = document.getElementById('file');
             const encodingInput = document.getElementById('encoding');
+            const verifyInput = document.getElementById('verify');
             const file = fileInput.files[0];
 
             if (!file) {
@@ -83,44 +142,44 @@
 
             document.getElementById('convert-btn').disabled = true;
             document.getElementById('loading').style.display = 'block';
-            showSuccess(""); 
-            showError(""); // 清除旧消息
+            showSuccess('');
+            showError('');
 
             const encoding = encodingInput.value;
 
-            // 使用 PapaParse 解析 CSV
             Papa.parse(file, {
                 encoding: encoding,
-                skipEmptyLines: true,
+                delimiter: '',
+                dynamicTyping: false,
+                skipEmptyLines: false,
+                transform: function(value) {
+                    return value == null ? '' : String(value);
+                },
                 complete: function(results) {
                     try {
                         if (results.errors.length > 0 && results.data.length === 0) {
                             throw new Error("CSV 解析失败: " + JSON.stringify(results.errors));
                         }
 
-                        const data = results.data;
-                        
-                        // 创建 Workbook
-                        const wb = XLSX.utils.book_new();
-                        
-                        // 转换为 Sheet，强制所有单元格为文本类型
-                        // 方法：先生成 sheet，然后遍历修改类型
-                        const ws = XLSX.utils.aoa_to_sheet(data);
+                        const inputMatrix = normalizeMatrix(results.data).normalized;
+                        if (inputMatrix.length === 0) {
+                            throw new Error('CSV 为空');
+                        }
 
-                        // 获取 sheet 的范围
-                        const range = XLSX.utils.decode_range(ws['!ref']);
-                        
-                        // 遍历所有单元格，强制设置为文本格式
-                        for(let R = range.s.r; R <= range.e.r; ++R) {
-                            for(let C = range.s.c; C <= range.e.c; ++C) {
-                                const cell_address = {c:C, r:R};
-                                const cell_ref = XLSX.utils.encode_cell(cell_address);
-                                
-                                if(!ws[cell_ref]) continue;
-                                
-                                // 强制类型为 String ('s')，并设置格式为 Text ('@')
-                                ws[cell_ref].t = 's';
-                                ws[cell_ref].z = '@';
+                        const wb = XLSX.utils.book_new();
+
+                        const ws = XLSX.utils.aoa_to_sheet(inputMatrix);
+
+                        if (ws['!ref']) {
+                            const range = XLSX.utils.decode_range(ws['!ref']);
+                            for (let R = range.s.r; R <= range.e.r; R += 1) {
+                                for (let C = range.s.c; C <= range.e.c; C += 1) {
+                                    const cell_ref = XLSX.utils.encode_cell({ c: C, r: R });
+                                    const cell = ws[cell_ref];
+                                    if (!cell) continue;
+                                    cell.v = cell.v == null ? '' : String(cell.v);
+                                    cell.t = 's';
+                                }
                             }
                         }
 
@@ -133,8 +192,32 @@
                         }
                         outputFilename += '.xlsx';
 
-                        // 下载
-                        XLSX.writeFile(wb, outputFilename);
+                        const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true, bookSST: true });
+
+                        if (verifyInput && verifyInput.checked) {
+                            const wb2 = XLSX.read(out, { type: 'array' });
+                            const sheetName = wb2.SheetNames[0];
+                            const ws2 = wb2.Sheets[sheetName];
+                            const matrix2 = XLSX.utils.sheet_to_json(ws2, { header: 1, raw: false, defval: '' });
+                            const a = normalizeMatrix(inputMatrix).normalized;
+                            const b = normalizeMatrix(matrix2).normalized;
+                            const mismatch = findFirstMismatch(a, b);
+                            if (mismatch) {
+                                throw new Error(`一致性校验失败：第 ${mismatch.r + 1} 行第 ${mismatch.c + 1} 列不一致（CSV="${mismatch.va}", XLSX="${mismatch.vb}"）`);
+                            }
+                        }
+
+                        const blob = new Blob([out], {
+                            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = outputFilename;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
                         
                         showSuccess(`转换成功！文件 ${outputFilename} 已开始下载。`);
                     } catch (e) {
@@ -149,6 +232,92 @@
                     showError("读取文件失败: " + err.message);
                     document.getElementById('convert-btn').disabled = false;
                     document.getElementById('loading').style.display = 'none';
+                }
+            });
+        }
+
+        function selfTest() {
+            const sample = [
+                'id,name,amount,code,note',
+                '1,张三,123,000123,普通行',
+                '2,李四,"1,234","ABC,DEF",含逗号',
+                '3,,,"",空值和空字符串',
+                ',,,,' ,
+                '4,"含引号""内容""",999999999999999999,END,长数字和引号'
+            ].join('\n');
+
+            showError('');
+            showSuccess('');
+
+            const loading = document.getElementById('loading');
+            const btn = document.getElementById('test-btn');
+            if (btn) btn.disabled = true;
+            loading.style.display = 'block';
+
+            Papa.parse(sample, {
+                delimiter: '',
+                dynamicTyping: false,
+                skipEmptyLines: false,
+                transform: function(value) {
+                    return value == null ? '' : String(value);
+                },
+                complete: function(results) {
+                    try {
+                        if (results.errors.length > 0 && results.data.length === 0) {
+                            throw new Error('CSV 解析失败: ' + JSON.stringify(results.errors));
+                        }
+
+                        const inputMatrix = normalizeMatrix(results.data).normalized;
+                        if (inputMatrix.length === 0) {
+                            throw new Error('CSV 为空');
+                        }
+
+                        const wb = XLSX.utils.book_new();
+                        const ws = XLSX.utils.aoa_to_sheet(inputMatrix);
+
+                        if (ws['!ref']) {
+                            const range = XLSX.utils.decode_range(ws['!ref']);
+                            for (let R = range.s.r; R <= range.e.r; R += 1) {
+                                for (let C = range.s.c; C <= range.e.c; C += 1) {
+                                    const cellRef = XLSX.utils.encode_cell({ c: C, r: R });
+                                    const cell = ws[cellRef];
+                                    if (!cell) continue;
+                                    cell.v = cell.v == null ? '' : String(cell.v);
+                                    cell.t = 's';
+                                }
+                            }
+                        }
+
+                        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+
+                        const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true, bookSST: true });
+
+                        const wb2 = XLSX.read(out, { type: 'array' });
+                        const sheetName = wb2.SheetNames[0];
+                        const ws2 = wb2.Sheets[sheetName];
+                        const matrix2 = XLSX.utils.sheet_to_json(ws2, { header: 1, raw: false, defval: '' });
+
+                        const a = normalizeMatrix(inputMatrix).normalized;
+                        const b = normalizeMatrix(matrix2).normalized;
+                        const mismatch = findFirstMismatch(a, b);
+
+                        if (mismatch) {
+                            throw new Error('自测失败：第 ' + (mismatch.r + 1) + ' 行第 ' + (mismatch.c + 1) + ' 列不一致（CSV="' + mismatch.va + '", XLSX="' + mismatch.vb + '"）');
+                        }
+
+                        showSuccess('自测通过：示例 CSV 与生成的 Excel 内容完全一致。');
+                    } catch (e) {
+                        console.error(e);
+                        showError('自测失败: ' + e.message);
+                    } finally {
+                        if (btn) btn.disabled = false;
+                        loading.style.display = 'none';
+                    }
+                },
+                error: function(err) {
+                    if (btn) btn.disabled = false;
+                    loading.style.display = 'none';
+                    showError('自测读取失败: ' + err.message);
                 }
             });
         }
