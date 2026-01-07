@@ -1,34 +1,24 @@
-# CSV 转 Excel 网页工具
+# CSVConverter (纯前端版)
 
 这是一个轻量级的 Web 工具，用于将 CSV 文件转换为 Excel (XLSX) 格式，并确保长数字不会丢失精度（强制使用文本格式）。
 
-## 目录结构
-- `app.py`: Flask 主程序
-- `csv_to_excel.py`: 核心转换逻辑
-- `templates/index.html`: 前端页面
-- `requirements.txt`: 依赖列表
+## 特性
 
-## 部署步骤
+*   **纯前端运行**：利用 JavaScript 在浏览器中完成转换，**文件不上传服务器**，安全隐私。
+*   **适配 GitHub Pages**：无需后端，直接部署。
+*   **防止精度丢失**：所有单元格强制转换为文本格式，完美解决身份证号、长订单号变成科学计数法的问题。
+*   **支持多种编码**：支持 UTF-8, GBK, Latin-1 等编码。
 
-1. **安装 Python 3**
-   确保服务器已安装 Python 3.8 或更高版本。
+## 使用方法
 
-2. **安装依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
+访问部署好的 GitHub Pages 地址（例如 `https://your-username.github.io/CSVConverter/`），选择 CSV 文件即可转换。
 
-3. **运行服务**
-   ```bash
-   python app.py
-   ```
-   默认运行在 `http://0.0.0.0:8000`。
+## 开发
 
-## 生产环境部署建议
-在生产环境中，建议使用 `gunicorn` 或 `uwsgi` 来运行 Flask 应用，而不是直接使用 `python app.py`。
+本项目使用原生 HTML/JS，依赖以下库（通过 CDN 引入）：
+*   [PapaParse](https://www.papaparse.com/): CSV 解析
+*   [SheetJS (xlsx)](https://sheetjs.com/): Excel 生成
 
-示例（使用 gunicorn）：
-```bash
-pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:8000 app:app
-```
+## 历史版本
+
+原 Python Flask 版本已移动到 `python_backend/` 目录下。如果你需要部署到支持 Python 的服务器，请参考该目录下的文件。
